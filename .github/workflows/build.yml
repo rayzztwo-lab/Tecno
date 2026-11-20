@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Siapkan project
+        id: p
+        run: |
+          ls -la
+          if ! ls *.zip >/dev/null 2>&1; then
+            echo "::error::Tidak ada file .zip di repo. Upload RBoost.zip lewat Add file > Upload files."
+            exit 1
+          fi
+          z=$(ls -t *.zip | head -n 1)
+          echo "Memakai zip: $z"
+          rm -rf _work
+          unzip -q -o "$z" -d _work || { echo "::error::Gagal membuka $z (zip rusak atau salah upload)"; exit 1; }
+          f=$(find _work -name settings.gradle.kts -not -path "*/build/*" | head -n 1)
+          if [ -z "$f" ]; then
+            echo "::error::settings.gradle.kts tidak ditemukan di dalam $z"
+            exit 1
+          fi
+          d=$(dirname "$f")
+          echo "Project ditemukan di: $d"
+          echo "dir=$d" >> "$GITHUB_OUTPUT"
+
+      - name: Build debug APK
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: |
+          set +e
+          gradle assembleDebug --no-daemon --stacktrace > "$RUNNER_TEMP/gradle.txt" 2>&1
+          rc=$?
+          tail -n 40 "$RUNNER_TEMP/gradle.txt"
+          if [ $rc -ne 0 ]; then
+            grep -E "^e: |error:|What went wrong|Could not|Unresolved|FAILED" "$RUNNER_TEMP/gradle.txt" | head -12 | while IFS= read -r l; do echo "::error::$l"; done
+            exit $rc
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RBOOST-debug-apk
+          path: ${{ steps.p.outputs.dir }}/app/build/outputs/apk/debug/*.apk
